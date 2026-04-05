@@ -141,6 +141,8 @@ function AdminDashboard({ onBack }) {
   const fileRef = useRef(null), rosterFileRef = useRef(null)
   const [selQ, setSelQ] = useState(new Set()), [editQ, setEditQ] = useState(null)
   const [selR, setSelR] = useState(new Set()), [newSid, setNewSid] = useState(''), [newName, setNewName] = useState(''), [detailStudent, setDetailStudent] = useState(null)
+  // 기간별 응시 기록 삭제
+  const [purgeFrom, setPurgeFrom] = useState(''), [purgeTo, setPurgeTo] = useState(''), [purgePreview, setPurgePreview] = useState(null), [purging, setPurging] = useState(false)
   const addLog = (m) => setLog(p => [`[${new Date().toLocaleTimeString()}] ${m}`, ...p].slice(0, 100))
 
   useEffect(() => { loadActiveExam(); loadRoster(); const iv = setInterval(() => { if (exam) loadStudents() }, 3000); return () => clearInterval(iv) }, [exam?.id])
@@ -176,6 +178,37 @@ function AdminDashboard({ onBack }) {
   const togInc = async (id, cur) => { await supabase.from('questions').update({ is_included:!cur }).eq('id', id); loadQuestions() }
   const bulkInc = async (v) => { if (selQ.size===0) return; await supabase.from('questions').update({ is_included:v }).in('id', Array.from(selQ)); loadQuestions() }
   const saveEQ = async () => { if (!editQ) return; await supabase.from('questions').update({ question:editQ.question, category:editQ.category, explanation:editQ.explanation, options:editQ.options, answer:editQ.answer, pairs:editQ.pairs }).eq('id', editQ.id); setEditQ(null); loadQuestions() }
+
+  // 기간별 응시 기록 삭제
+  const previewPurge = async () => {
+    if (!purgeFrom || !purgeTo) { alert('시작일과 종료일을 모두 선택하세요.'); return }
+    const from = new Date(purgeFrom); from.setHours(0,0,0,0)
+    const to = new Date(purgeTo); to.setHours(23,59,59,999)
+    if (from > to) { alert('시작일이 종료일보다 늦습니다.'); return }
+    // 해당 기간의 학생 세션 조회
+    const { data: sessions, error } = await supabase.from('students').select('id, student_id, name, status, score, created_at').gte('created_at', from.toISOString()).lte('created_at', to.toISOString())
+    if (error) { alert('조회 오류: ' + error.message); return }
+    // 해당 세션의 응답 수 조회
+    let answerCount = 0
+    if (sessions?.length) {
+      const { count } = await supabase.from('answers').select('id', { count: 'exact', head: true }).in('student_id', sessions.map(s => s.id))
+      answerCount = count || 0
+    }
+    setPurgePreview({ sessions: sessions || [], answerCount, from: purgeFrom, to: purgeTo })
+  }
+
+  const executePurge = async () => {
+    if (!purgePreview?.sessions?.length) return
+    if (!confirm(`정말 삭제하시겠습니까?\n\n기간: ${purgePreview.from} ~ ${purgePreview.to}\n응시 세션: ${purgePreview.sessions.length}건\n응답 기록: ${purgePreview.answerCount}건\n\n⚠️ 삭제된 데이터는 복구할 수 없습니다.`)) return
+    setPurging(true)
+    const ids = purgePreview.sessions.map(s => s.id)
+    // answers는 CASCADE로 자동 삭제됨
+    const { error } = await supabase.from('students').delete().in('id', ids)
+    if (error) { alert('삭제 오류: ' + error.message); setPurging(false); return }
+    addLog(`═══ 응시 기록 삭제: ${purgePreview.from}~${purgePreview.to} (${ids.length}건 세션, ${purgePreview.answerCount}건 응답) ═══`)
+    setPurgePreview(null); setPurging(false); setPurgeFrom(''); setPurgeTo('')
+    loadStudents(); loadAnalytics()
+  }
 
   const incC = questions.filter(q => q.is_included!==false).length
   const tabBtn = (k, l) => <button key={k} onClick={() => { setTab(k); if (k==='analytics') loadAnalytics(); if (k==='roster') { loadRoster(); loadExamHistory() } }} style={{ padding:'9px 14px', fontSize:13, fontWeight:600, cursor:'pointer', background:tab===k?'rgba(59,130,246,0.15)':'transparent', color:tab===k?C.blue:C.t2, border:'none', borderBottom:tab===k?`2px solid ${C.blue}`:'2px solid transparent' }}>{l}</button>
@@ -237,7 +270,49 @@ function AdminDashboard({ onBack }) {
     </>}
 
     {/* 문제 분석 */}
-    {tab==='analytics'&&<div style={S.card}><div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}><h3 style={{ color:C.t1, fontSize:15, fontWeight:700, margin:0 }}>문제별 분석</h3><button onClick={loadAnalytics} style={S.btnSm(C.blue)}>🔄 새로고침</button></div>{analytics.length===0?<p style={{ color:C.t2 }}>데이터가 없습니다.</p>:<div style={{ overflowX:'auto' }}><table style={{ width:'100%', borderCollapse:'collapse' }}><thead><tr>{['#','상태','유형','카테고리','문제','응시','정답률','평균(초)','난이도'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead><tbody>{analytics.map(a=><tr key={a.question_id} style={{ opacity:a.is_included!==false?1:0.4 }}><td style={S.td}>{a.sort_order}</td><td style={S.td}><span style={S.tag(a.is_included!==false?C.green:C.red)}>{a.is_included!==false?'포함':'제외'}</span></td><td style={S.td}><span style={S.tag(TYPE_C[a.type]||C.t2)}>{TYPE_L[a.type]}</span></td><td style={S.td}>{a.category}</td><td style={{ ...S.td, maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.question}</td><td style={S.td}>{a.attempt_count}</td><td style={{ ...S.td, fontWeight:700, color:a.correct_rate>=60?C.green:a.correct_rate>0?C.red:C.t2 }}>{a.correct_rate}%</td><td style={S.td}>{a.avg_time_sec}초</td><td style={S.td}><span style={S.tag(a.difficulty==='어려움'?C.red:a.difficulty==='보통'?C.yellow:a.difficulty==='쉬움'?C.green:C.t2)}>{a.difficulty}</span></td></tr>)}</tbody></table></div>}</div>}
+    {tab==='analytics'&&<>
+      <div style={S.card}><div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}><h3 style={{ color:C.t1, fontSize:15, fontWeight:700, margin:0 }}>문제별 분석</h3><button onClick={loadAnalytics} style={S.btnSm(C.blue)}>🔄 새로고침</button></div>{analytics.length===0?<p style={{ color:C.t2 }}>데이터가 없습니다.</p>:<div style={{ overflowX:'auto' }}><table style={{ width:'100%', borderCollapse:'collapse' }}><thead><tr>{['#','상태','유형','카테고리','문제','응시','정답률','평균(초)','난이도'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead><tbody>{analytics.map(a=><tr key={a.question_id} style={{ opacity:a.is_included!==false?1:0.4 }}><td style={S.td}>{a.sort_order}</td><td style={S.td}><span style={S.tag(a.is_included!==false?C.green:C.red)}>{a.is_included!==false?'포함':'제외'}</span></td><td style={S.td}><span style={S.tag(TYPE_C[a.type]||C.t2)}>{TYPE_L[a.type]}</span></td><td style={S.td}>{a.category}</td><td style={{ ...S.td, maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.question}</td><td style={S.td}>{a.attempt_count}</td><td style={{ ...S.td, fontWeight:700, color:a.correct_rate>=60?C.green:a.correct_rate>0?C.red:C.t2 }}>{a.correct_rate}%</td><td style={S.td}>{a.avg_time_sec}초</td><td style={S.td}><span style={S.tag(a.difficulty==='어려움'?C.red:a.difficulty==='보통'?C.yellow:a.difficulty==='쉬움'?C.green:C.t2)}>{a.difficulty}</span></td></tr>)}</tbody></table></div>}</div>
+
+      {/* 기간별 응시 기록 삭제 */}
+      <div style={{ ...S.card, border:'1px solid rgba(239,68,68,0.15)' }}>
+        <h3 style={{ color:C.t1, fontSize:15, fontWeight:700, margin:'0 0 4px' }}>🗓 기간별 응시 기록 삭제</h3>
+        <p style={{ color:C.t2, fontSize:12, margin:'0 0 16px' }}>특정 기간의 응시 기록(학생 세션 + 응답)을 삭제하여, 회차별 분석 데이터를 초기화합니다.</p>
+        <div style={{ display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap', marginBottom:14 }}>
+          <div><label style={{ fontSize:11, color:C.t2, display:'block', marginBottom:3 }}>시작일</label><input type="date" value={purgeFrom} onChange={e=>{ setPurgeFrom(e.target.value); setPurgePreview(null) }} style={{ ...S.input, width:160 }} /></div>
+          <div><label style={{ fontSize:11, color:C.t2, display:'block', marginBottom:3 }}>종료일</label><input type="date" value={purgeTo} onChange={e=>{ setPurgeTo(e.target.value); setPurgePreview(null) }} style={{ ...S.input, width:160 }} /></div>
+          <button onClick={previewPurge} style={S.btn(C.yellow)}>🔍 조회</button>
+        </div>
+
+        {purgePreview && <>
+          <div style={{ padding:14, borderRadius:10, background:'rgba(239,68,68,0.04)', border:'1px solid rgba(239,68,68,0.1)', marginBottom:12 }}>
+            <div style={{ display:'flex', gap:20, marginBottom:10, flexWrap:'wrap' }}>
+              <div><span style={{ color:C.t2, fontSize:12 }}>기간</span><p style={{ color:C.t1, fontSize:14, fontWeight:700, margin:'2px 0 0' }}>{purgePreview.from} ~ {purgePreview.to}</p></div>
+              <div><span style={{ color:C.t2, fontSize:12 }}>응시 세션</span><p style={{ color:C.red, fontSize:20, fontWeight:800, margin:'2px 0 0' }}>{purgePreview.sessions.length}건</p></div>
+              <div><span style={{ color:C.t2, fontSize:12 }}>응답 기록</span><p style={{ color:C.red, fontSize:20, fontWeight:800, margin:'2px 0 0' }}>{purgePreview.answerCount}건</p></div>
+            </div>
+
+            {purgePreview.sessions.length > 0 && <div style={{ maxHeight:200, overflowY:'auto', marginBottom:12 }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}><thead><tr>{['학번','이름','상태','점수','응시일'].map(h=><th key={h} style={{ ...S.th, fontSize:11, padding:'5px 8px' }}>{h}</th>)}</tr></thead>
+              <tbody>{purgePreview.sessions.map(s=><tr key={s.id}>
+                <td style={{ ...S.td, fontSize:12, padding:'4px 8px' }}>{s.student_id}</td>
+                <td style={{ ...S.td, fontSize:12, padding:'4px 8px' }}>{s.name}</td>
+                <td style={{ ...S.td, fontSize:12, padding:'4px 8px' }}><span style={S.tag(statusColor(s.status))}>{s.status}</span></td>
+                <td style={{ ...S.td, fontSize:12, padding:'4px 8px', fontWeight:700, color:s.score>=60?C.green:s.score!=null?C.red:C.t2 }}>{s.score!=null?`${s.score}점`:'-'}</td>
+                <td style={{ ...S.td, fontSize:12, padding:'4px 8px' }}>{new Date(s.created_at).toLocaleString('ko-KR')}</td>
+              </tr>)}</tbody></table>
+            </div>}
+
+            {purgePreview.sessions.length === 0
+              ? <p style={{ color:C.t2, fontSize:13 }}>해당 기간에 응시 기록이 없습니다.</p>
+              : <div style={{ display:'flex', gap:8 }}>
+                  <button onClick={executePurge} disabled={purging} style={S.btn(C.red)}>{purging ? '삭제 중...' : `🗑 ${purgePreview.sessions.length}건 삭제 실행`}</button>
+                  <button onClick={()=>setPurgePreview(null)} style={S.btnSec}>취소</button>
+                </div>
+            }
+          </div>
+        </>}
+      </div>
+    </>}
     {tab==='log'&&<div style={{ ...S.card, maxHeight:500, overflowY:'auto' }}>{log.length===0?<p style={{ color:C.t2 }}>로그가 없습니다.</p>:log.map((l,i)=><div key={i} style={{ fontSize:12, color:C.t2, padding:'3px 0', borderBottom:'1px solid rgba(148,163,184,0.05)', fontFamily:'monospace' }}>{l}</div>)}</div>}
   </div></div>
 }
