@@ -48,6 +48,7 @@ const S = {
 }
 const TYPE_L = { multiple_choice:'4지선다', ox:'O/X', short_answer:'단답형', matching:'선잇기' }
 const TYPE_C = { multiple_choice:C.blue, ox:C.purple, short_answer:C.yellow, matching:C.green }
+const statusColor = (s) => s==='제출완료'?C.green:s==='응시중'?C.blue:s==='응시종료'?C.yellow:C.t2
 
 /* ═══════════════════ MINI BAR CHART ═══════════════════ */
 function MiniBarChart({ scores, height = 100, width = 280 }) {
@@ -189,7 +190,7 @@ function AdminDashboard({ onBack }) {
           <MiniBarChart scores={scores} height={100} width={460} />
           <h4 style={{ color:C.t2, fontSize:13, fontWeight:700, margin:'16px 0 8px' }}>응시 이력</h4>
           {hist.length === 0 ? <p style={{ color:C.t2, fontSize:13 }}>없음</p> :
-          <table style={{ width:'100%', borderCollapse:'collapse' }}><thead><tr>{['시험명','상태','점수','정답','제출시간'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead><tbody>{hist.map((h, i) => <tr key={i}><td style={S.td}>{h.exam_title||'-'}</td><td style={S.td}><span style={S.tag(h.status==='제출완료'?C.green:C.blue)}>{h.status||'-'}</span></td><td style={{ ...S.td, fontWeight:700, color:h.score>=60?C.green:h.score!=null?C.red:C.t2 }}>{h.score!=null?`${h.score}점`:'-'}</td><td style={S.td}>{h.correct_count!=null?`${h.correct_count}/${h.total_questions}`:'-'}</td><td style={S.td}>{h.submitted_at?new Date(h.submitted_at).toLocaleString('ko-KR'):'-'}</td></tr>)}</tbody></table>}
+          <table style={{ width:'100%', borderCollapse:'collapse' }}><thead><tr>{['시험명','상태','점수','정답','제출시간'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead><tbody>{hist.map((h, i) => <tr key={i}><td style={S.td}>{h.exam_title||'-'}</td><td style={S.td}><span style={S.tag(statusColor(h.status))}>{h.status||'-'}</span></td><td style={{ ...S.td, fontWeight:700, color:h.score>=60?C.green:h.score!=null?C.red:C.t2 }}>{h.score!=null?`${h.score}점`:'-'}</td><td style={S.td}>{h.correct_count!=null?`${h.correct_count}/${h.total_questions}`:'-'}</td><td style={S.td}>{h.submitted_at?new Date(h.submitted_at).toLocaleString('ko-KR'):'-'}</td></tr>)}</tbody></table>}
         </> })()}
       </div></div>}
     </>}
@@ -199,7 +200,7 @@ function AdminDashboard({ onBack }) {
       {students.length === 0 ? <p style={{ color:C.t2 }}>접속한 학생이 없습니다.</p> :
       <div style={{ overflowX:'auto' }}><table style={{ width:'100%', borderCollapse:'collapse' }}><thead><tr>{['학번','이름','상태','현재','정답','점수','시간'].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead><tbody>{students.map(s => {
         const el = s.started_at ? Math.floor(((s.submitted_at?new Date(s.submitted_at):new Date())-new Date(s.started_at))/1000) : 0
-        return <tr key={s.id}><td style={S.td}>{s.student_id}</td><td style={S.td}>{s.name}</td><td style={S.td}><span style={S.tag(s.status==='제출완료'?C.green:s.status==='응시중'?C.blue:C.t2)}>{s.status}</span></td><td style={S.td}>{s.total_questions>0?`${s.current_question}/${s.total_questions}`:'-'}</td><td style={S.td}>{s.correct_count||0}</td><td style={{ ...S.td, fontWeight:700, color:s.score>=60?C.green:s.score?C.red:C.t2 }}>{s.score!=null?`${s.score}점`:'-'}</td><td style={S.td}>{el>0?`${Math.floor(el/60)}분${el%60}초`:'-'}</td></tr>
+        return <tr key={s.id}><td style={S.td}>{s.student_id}</td><td style={S.td}>{s.name}</td><td style={S.td}><span style={S.tag(statusColor(s.status))}>{s.status}</span></td><td style={S.td}>{s.total_questions>0?`${s.current_question}/${s.total_questions}`:'-'}</td><td style={S.td}>{s.correct_count||0}</td><td style={{ ...S.td, fontWeight:700, color:s.score>=60?C.green:s.score?C.red:C.t2 }}>{s.score!=null?`${s.score}점`:'-'}</td><td style={S.td}>{el>0?`${Math.floor(el/60)}분${el%60}초`:'-'}</td></tr>
       })}</tbody></table></div>}
     </div>}
 
@@ -319,8 +320,8 @@ function StudentLobby({ studentId, studentName, onStartExam, onBack }) {
   }
 
   const loadWrongQuestions = async () => {
-    // 1. 이 학생의 모든 세션 ID
-    const { data: sessions } = await supabase.from('students').select('id').eq('student_id', studentId)
+    // 1. 이 학생의 '제출완료' 세션만 조회
+    const { data: sessions } = await supabase.from('students').select('id').eq('student_id', studentId).eq('status', '제출완료')
     if (!sessions?.length) { setWrongQuestions([]); return }
     const sessionIds = sessions.map(s => s.id)
     // 2. 오답 기록 조회
@@ -351,7 +352,7 @@ function StudentLobby({ studentId, studentName, onStartExam, onBack }) {
     onStartExam({ student, exam })
   }
 
-  const pastScores = pastResults.filter(r => r.score != null).map(r => r.score).reverse()
+  const pastScores = pastResults.filter(r => r.score != null && r.status === '제출완료').map(r => r.score).reverse()
   const tabS = (k) => ({ padding:'8px 16px', fontSize:13, fontWeight:600, cursor:'pointer', background:lobbyTab===k?'rgba(59,130,246,0.15)':'transparent', color:lobbyTab===k?C.blue:C.t2, border:'none', borderBottom:lobbyTab===k?`2px solid ${C.blue}`:'2px solid transparent' })
 
   if (loading) return <div style={S.page}><p style={{ color:C.t2, textAlign:'center', marginTop:60 }}>불러오는 중...</p></div>
@@ -412,7 +413,7 @@ function StudentLobby({ studentId, studentName, onStartExam, onBack }) {
           const examTitle = r.exams?.title || '시험'
           return <tr key={i}>
             <td style={S.td}>{examTitle}</td>
-            <td style={S.td}><span style={S.tag(r.status==='제출완료'?C.green:r.status==='응시중'?C.blue:C.t2)}>{r.status}</span></td>
+            <td style={S.td}><span style={S.tag(statusColor(r.status))}>{r.status}</span></td>
             <td style={{ ...S.td, fontWeight:700, color:r.score>=60?C.green:r.score!=null?C.red:C.t2 }}>{r.score!=null?`${r.score}점`:'-'}</td>
             <td style={S.td}>{r.correct_count!=null?`${r.correct_count}/${r.total_questions}`:'-'}</td>
             <td style={S.td}>{r.score!=null?<span style={S.tag(r.score>=60?C.green:C.red)}>{r.score>=60?'합격':'불합격'}</span>:'-'}</td>
@@ -453,20 +454,34 @@ function StudentLobby({ studentId, studentName, onStartExam, onBack }) {
 }
 
 /* ═══════════════════ STUDENT EXAM ═════════════════════ */
-function StudentExam({ student: initStudent, exam: initExam, onFinish }) {
+function StudentExam({ student: initStudent, exam: initExam, onFinish, onAbandon }) {
   const [student] = useState(initStudent), [exam] = useState(initExam)
   const [questions, setQuestions] = useState([]), [ci, setCi] = useState(0), [answers, setAnswers] = useState({}), [timeLeft, setTimeLeft] = useState(0), [submitted, setSubmitted] = useState(false), [showNav, setShowNav] = useState(false)
-  const qStartRef = useRef(Date.now()), timeSpent = useRef({}), timerRef = useRef(null)
+  const qStartRef = useRef(Date.now()), timeSpent = useRef({}), timerRef = useRef(null), submittedRef = useRef(false)
 
   useEffect(() => { loadQuestions() }, [])
   const loadQuestions = async () => { const { data } = await supabase.from('questions').select('*').eq('exam_id', exam.id).eq('is_included', true).order('sort_order'); if (data) { setQuestions(data); setTimeLeft(exam.time_limit_min * 60); await supabase.from('students').update({ total_questions: data.length, current_question: 1 }).eq('id', student.id) } }
   useEffect(() => { if (questions.length===0||submitted) return; timerRef.current = setInterval(() => setTimeLeft(t => { if (t<=1) { clearInterval(timerRef.current); submitExam(); return 0 } return t-1 }), 1000); return () => clearInterval(timerRef.current) }, [questions.length, submitted])
 
+  // 브라우저 종료/새로고침 시 응시종료 처리
+  useEffect(() => {
+    const markAbandon = () => {
+      if (!submittedRef.current) {
+        navigator.sendBeacon && fetch(`${supabase.supabaseUrl}/rest/v1/students?id=eq.${student.id}`, {
+          method: 'PATCH', headers: { 'Content-Type':'application/json', 'apikey': supabase.supabaseKey, 'Authorization': `Bearer ${supabase.supabaseKey}`, 'Prefer':'return=minimal' },
+          body: JSON.stringify({ status: '응시종료', submitted_at: new Date().toISOString() }), keepalive: true
+        }).catch(() => {})
+      }
+    }
+    window.addEventListener('beforeunload', markAbandon)
+    return () => { window.removeEventListener('beforeunload', markAbandon); if (!submittedRef.current) { supabase.from('students').update({ status:'응시종료', submitted_at: new Date().toISOString() }).eq('id', student.id).then(() => {}) } }
+  }, [student.id])
+
   const recordTime = () => { if (!questions[ci]) return; timeSpent.current[questions[ci].id] = (timeSpent.current[questions[ci].id]||0) + Date.now() - qStartRef.current; qStartRef.current = Date.now() }
   const navigateTo = async (idx) => { if (idx<0||idx>=questions.length||submitted) return; recordTime(); setCi(idx); qStartRef.current = Date.now(); await supabase.from('students').update({ current_question: idx+1 }).eq('id', student.id) }
 
   const submitExam = async () => {
-    if (submitted) return; setSubmitted(true); clearInterval(timerRef.current); recordTime()
+    if (submitted) return; setSubmitted(true); submittedRef.current = true; clearInterval(timerRef.current); recordTime()
     let cc = 0
     for (const q of questions) { const ua = answers[q.id]; const c = checkAnswer(q, ua); if (c) cc++; await supabase.from('answers').upsert({ student_id: student.id, question_id: q.id, exam_id: exam.id, user_answer: ua ?? null, is_correct: c, time_spent_ms: timeSpent.current[q.id]||0 }, { onConflict: 'student_id,question_id' }) }
     const score = Math.round(cc/questions.length*1000)/10
@@ -480,7 +495,7 @@ function StudentExam({ student: initStudent, exam: initExam, onFinish }) {
   return <div style={S.page}><div style={S.container}>
     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
       <div><h2 style={{ color:C.t1, fontSize:17, fontWeight:700, margin:0 }}>{exam.title}</h2><p style={{ color:C.t2, fontSize:12, margin:'3px 0 0' }}>{ci+1}/{questions.length} · {ac}개 작성 · {student.name}</p></div>
-      <div style={{ display:'flex', alignItems:'center', gap:10 }}><div style={{ fontWeight:700, fontSize:17, fontVariantNumeric:'tabular-nums', color:timeLeft<60?C.red:timeLeft<120?C.yellow:C.blue }}>⏱ {String(min).padStart(2,'0')}:{String(sec).padStart(2,'0')}</div><button onClick={() => setShowNav(!showNav)} style={S.btnSec}>☰</button></div>
+      <div style={{ display:'flex', alignItems:'center', gap:10 }}><div style={{ fontWeight:700, fontSize:17, fontVariantNumeric:'tabular-nums', color:timeLeft<60?C.red:timeLeft<120?C.yellow:C.blue }}>⏱ {String(min).padStart(2,'0')}:{String(sec).padStart(2,'0')}</div><button onClick={() => setShowNav(!showNav)} style={S.btnSec}>☰</button><button onClick={() => { if(confirm('시험을 종료하시겠습니까?\n제출하지 않고 나가면 "응시종료" 처리됩니다.')) onAbandon() }} style={S.btnSm(C.red)}>✕ 나가기</button></div>
     </div>
     <div style={{ width:'100%', height:4, background:'rgba(148,163,184,0.1)', borderRadius:2, marginBottom:14, overflow:'hidden' }}><div style={{ height:'100%', width:`${progress}%`, background:C.blue, borderRadius:2, transition:'width 0.3s' }} /></div>
     {showNav && <div style={{ ...S.card, padding:14 }}><div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>{questions.map((qq,i) => <button key={i} onClick={() => navigateTo(i)} style={{ width:32, height:32, borderRadius:7, border:'none', cursor:'pointer', fontWeight:700, fontSize:12, background:i===ci?C.blue:answers[qq.id]!=null?'rgba(16,185,129,0.15)':'rgba(148,163,184,0.1)', color:i===ci?'#fff':answers[qq.id]!=null?C.green:C.t2 }}>{i+1}</button>)}</div></div>}
@@ -549,7 +564,7 @@ export default function App() {
     case 'admin': return <AdminDashboard onBack={() => setScreen('role')} />
     case 'studentLogin': return <StudentLogin onLogin={d => { setLoginData(d); setScreen('studentLobby') }} onBack={() => setScreen('role')} />
     case 'studentLobby': return <StudentLobby studentId={loginData.studentId} studentName={loginData.studentName} onStartExam={d => { setExamData(d); setScreen('studentExam') }} onBack={() => setScreen('role')} />
-    case 'studentExam': return <StudentExam student={examData.student} exam={examData.exam} onFinish={d => { setResultData(d); setScreen('studentResult') }} />
+    case 'studentExam': return <StudentExam student={examData.student} exam={examData.exam} onFinish={d => { setResultData(d); setScreen('studentResult') }} onAbandon={() => setScreen('studentLobby')} />
     case 'studentResult': return <StudentResult data={resultData} onHome={() => { setScreen('studentLobby') }} />
     default: return <RoleSelect onRole={r => setScreen(r==='admin'?'adminLogin':'studentLogin')} />
   }
